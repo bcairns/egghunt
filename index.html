@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Egg Hunt</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #333; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { border: 1px solid white; }
+    </style>
+</head>
+<body>
+<div id="game-container"></div>
+
+<script>
+
+    const TILE_SIZE = 32;
+    const MAP_WIDTH_TILES = 19;
+    const MAP_HEIGHT_TILES = 19;
+    const GAME_WIDTH = TILE_SIZE * MAP_WIDTH_TILES; // 608
+    const GAME_HEIGHT = TILE_SIZE * MAP_HEIGHT_TILES; // 608
+
+    const PLAYER_SPEED = 120;
+    const POWERED_PLAYER_SPEED = 200; // Faster speed when powered up
+    const MOVE_DURATION = TILE_SIZE / (PLAYER_SPEED / 1000);
+
+    const FOX_SPEED = 100;
+    const FOX_MOVE_DURATION = TILE_SIZE / (FOX_SPEED / 1000); // Fox movement duration
+    const POWER_UP_DURATION = 12000;
+    const POWER_UP_WARNING_TIME = 3000; // Time before power-up ends to start flashing
+    const TILE_CENTER_THRESHOLD = 2;
+
+    // Map Data Markers
+    const WALL = 1;
+    const PATH = 0;
+    const PLAYER_START = 'P';
+    const FOX_START = 'F';
+    const SPECIAL_EGG = 'S';
+
+    // Tunnel Row definitions
+    const TUNNEL_ROWS = [8, 12];
+
+    // --- Tilemap Data (Corrected Tunnel Entries) ---
+    const mapData = [
+        [WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL],
+        [WALL, SPECIAL_EGG, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, SPECIAL_EGG, WALL],
+        [WALL, PATH, WALL, WALL, PATH, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, PATH, WALL, WALL, PATH, WALL],
+        [WALL, PATH, WALL, WALL, PATH, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, PATH, WALL, WALL, PATH, WALL],
+        [WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL],
+        [WALL, PATH, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, PATH, WALL],
+        [WALL, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, WALL, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, WALL],
+        [WALL, WALL, WALL, WALL, PATH, WALL, WALL, WALL, FOX_START, WALL, FOX_START, WALL, WALL, WALL, PATH, WALL, WALL, WALL, WALL],
+// Row 8 (Index 8): Ensure Columns 0 and 18 are PATH for tunnel entry
+        [PATH, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, PATH], // <<< CORRECTED
+        [WALL, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, FOX_START, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, WALL],
+        [WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL],
+        [WALL, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, WALL],
+// Row 12 (Index 12): Ensure Columns 0 and 18 are PATH for tunnel entry
+        [PATH, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PLAYER_START, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, PATH], // <<< CORRECTED
+        [WALL, WALL, WALL, WALL, PATH, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, PATH, WALL, WALL, WALL, WALL],
+        [WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL],
+        [WALL, PATH, WALL, WALL, PATH, WALL, WALL, WALL, PATH, WALL, PATH, WALL, WALL, WALL, PATH, WALL, WALL, PATH, WALL],
+        [WALL, PATH, WALL, WALL, PATH, WALL, PATH, PATH, PATH, PATH, PATH, PATH, PATH, WALL, PATH, WALL, WALL, PATH, WALL],
+        [WALL, SPECIAL_EGG, PATH, PATH, PATH, WALL, PATH, WALL, WALL, WALL, WALL, WALL, PATH, WALL, PATH, PATH, PATH, SPECIAL_EGG, WALL],
+        [WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL, WALL],
+    ];
+
+
+    class GameScene extends Phaser.Scene {
+        constructor() {
+            super('GameScene');
+            // ... (properties remain the same) ...
+            this.isMoving = false;
+            this.currentDir = Phaser.NONE;
+            this.currentPlayerSpeed = PLAYER_SPEED; // Track current player speed
+            this.flashingTween = null; // For warning flash effect
+            this.warningFlashTimer = null; // Timer for warning flash
+        }
+
+        preload() {
+            // Load the bunny image.
+            // 'bunny' is the unique key we'll use to refer to this image.
+            // 'bunny.png' is the filename (assuming it's in the same folder).
+            this.load.image('bunny', 'bunny.png');
+            
+            // Load raven image for powered-up player
+            this.load.image('powered_bunny', 'raven.png');
+
+            // Load the fox image for enemies
+            this.load.image('fox_texture', 'fox.png');
+            this.load.image('vulnerable_fox_texture', 'fox.png');
+            
+            // Load egg image for pellets
+            this.load.image('egg_texture', 'egg.png');
+            
+            // Load power egg image for special eggs/power-ups
+            this.load.image('special_egg_texture', 'power-egg.png');
+        }
+
+        create() {
+            // ... (reset properties) ...
+            this.isMoving = false;
+            this.currentDir = Phaser.NONE;
+            this.currentPlayerSpeed = PLAYER_SPEED; // Reset player speed
+            this.eggCount = 0; // Reset egg count on scene create/restart
+
+            this.generatePlaceholders();
+
+            // --- Tilemap & Layer (using index 0 for walls) ---
+            this.map = this.make.tilemap({ data: this.tileDataFromMap(mapData), tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
+            const tileset = this.map.addTilesetImage('wall_ts', 'wall_texture', TILE_SIZE, TILE_SIZE, 0, 0);
+            this.levelLayer = this.map.createLayer(0, tileset, 0, 0);
+            if (this.levelLayer) {
+                this.levelLayer.setCollision(0); // Wall index is 0
+            } else { console.error("Level Layer failed!"); }
+
+            // --- Groups ---
+            this.eggs = this.physics.add.staticGroup();
+            this.specialEggs = this.physics.add.staticGroup();
+            this.foxes = this.physics.add.group();
+            
+            // We'll set depth on individual objects when they're created
+
+            // --- Populate Map ---
+            let playerStartX = 0;
+            let playerStartY = 0;
+            mapData.forEach((row, y) => {
+                row.forEach((tile, x) => {
+                    const worldX = x * TILE_SIZE + TILE_SIZE / 2;
+                    const worldY = y * TILE_SIZE + TILE_SIZE / 2;
+
+                    if (tile === PATH || tile === PLAYER_START || tile === FOX_START) {
+                        // Place egg on all path-like tiles
+                        this.eggs.create(worldX, worldY, 'egg_texture').setScale(0.94).setDepth(1).refreshBody();
+                        this.eggCount++;
+
+                        if (tile === PLAYER_START) {
+                            playerStartX = worldX;
+                            playerStartY = worldY;
+                        } else if (tile === FOX_START) {
+                            const fox = this.foxes.create(worldX, worldY, 'fox_texture');
+                            // Keep the body but don't use it for movement
+                            fox.body.setSize(TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+                            fox.setScale(0.7); // Scale the fox image to fit nicely in the tile
+                            fox.setDepth(10); // Higher depth to appear above eggs
+                            fox.originalX = worldX;
+                            fox.originalY = worldY;
+                            fox.isVulnerable = false;
+                            fox.isMoving = false;
+                            fox.currentDir = Phaser.NONE;
+                            fox.nextDir = Phaser.NONE;
+                            // Initialize fox movement after a short delay
+                            this.time.delayedCall(500 + Math.random() * 1000, () => {
+                                this.chooseFoxDirection(fox);
+                                this.moveFox(fox);
+                            }, [], this);
+                        }
+                    } else if (tile === SPECIAL_EGG) {
+                        this.specialEggs.create(worldX, worldY, 'special_egg_texture').setScale(0.8).setDepth(1).refreshBody();
+                    }
+                });
+            });
+            console.log("Total regular eggs:", this.eggCount); // Log initial count
+
+            // --- Player ---
+            this.bunny = this.physics.add.sprite(playerStartX, playerStartY, 'bunny');
+            this.bunny.setScale(0.8); // Scale the bunny image to fit nicely in the tile
+            // this.bunny.setCollideWorldBounds(true); // <<< REMOVED FOR TUNNELS
+            // this.bunny.setDisplaySize(TILE_SIZE, TILE_SIZE);
+            this.bunny.body.setSize(TILE_SIZE * 0.9, TILE_SIZE * 0.9, true);
+            this.bunny.body.immovable = true;
+            this.bunny.body.allowGravity = false;
+            this.bunny.setDepth(20); // Player appears above everything else with highest depth
+
+            // --- Collisions / Overlaps ---
+            // No player/wall collider needed with tweening
+            this.physics.add.overlap(this.bunny, this.eggs, this.collectEgg, null, this);
+            this.physics.add.overlap(this.bunny, this.specialEggs, this.collectSpecialEgg, null, this);
+            this.physics.add.overlap(this.bunny, this.foxes, this.hitFox, null, this);
+
+            // --- Input ---
+            this.cursors = this.input.keyboard.createCursorKeys();
+        }
+
+        update(time, delta) {
+            if (!this.bunny.active) return;
+
+            // *** 1. Handle wrapping FIRST ***
+            this.handleTunneling(this.bunny);
+
+            // *** 2. Then check input ***
+            this.handlePlayerInput();
+
+            // *** 3. Then attempt movement based on wrapped position and input ***
+            this.movePlayer();
+
+            // --- Win Condition Check ---
+            if (this.eggCount <= 0) {
+                this.winGame();
+            }
+
+            // --- Fox Updates ---
+            this.foxes.getChildren().forEach(fox => {
+                if (fox.active && !fox.isMoving) {
+                    // If a fox is not moving, try to start movement
+                    this.moveFox(fox);
+                }
+            });
+        }
+
+        // --- Helper Functions ---
+
+        generatePlaceholders() { /* (Same as before) */
+            // let bunnyGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            // bunnyGfx.fillStyle(0xffffff, 1.0); bunnyGfx.fillRect(0, 0, TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+            // bunnyGfx.generateTexture('bunny_texture', TILE_SIZE * 0.8, TILE_SIZE * 0.8); bunnyGfx.destroy();
+            let foxGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            foxGfx.fillStyle(0xffa500, 1.0); foxGfx.fillRect(0, 0, TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+            foxGfx.generateTexture('fox_texture', TILE_SIZE * 0.8, TILE_SIZE * 0.8); foxGfx.destroy();
+            let vulnFoxGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            vulnFoxGfx.fillStyle(0xadd8e6, 1.0); vulnFoxGfx.fillRect(0, 0, TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+            vulnFoxGfx.generateTexture('vulnerable_fox_texture', TILE_SIZE * 0.8, TILE_SIZE * 0.8); vulnFoxGfx.destroy();
+            let wallGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            wallGfx.fillStyle(0x8b4513, 1.0); wallGfx.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+            wallGfx.generateTexture('wall_texture', TILE_SIZE, TILE_SIZE); wallGfx.destroy();
+            let eggGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            eggGfx.fillStyle(0xffff00, 1.0); eggGfx.fillCircle(TILE_SIZE / 2, TILE_SIZE / 2, TILE_SIZE * 0.15);
+            eggGfx.generateTexture('egg_texture', TILE_SIZE, TILE_SIZE); eggGfx.destroy();
+            let specialEggGfx = this.make.graphics({width: TILE_SIZE, height: TILE_SIZE});
+            specialEggGfx.fillStyle(0xffc0cb, 1.0); specialEggGfx.fillCircle(TILE_SIZE / 2, TILE_SIZE / 2, TILE_SIZE * 0.25);
+            specialEggGfx.generateTexture('special_egg_texture', TILE_SIZE, TILE_SIZE); specialEggGfx.destroy();
+        }
+
+        tileDataFromMap(sourceMap) { /* (Same as before - maps WALL to 0) */
+            // Convert the map data to a format that Phaser's tilemap expects
+            // In the source map, 0 is PATH, 1 is WALL, but in Phaser, 0 is the first tile index
+            // So we need to swap these: PATH becomes -1 (no tile), WALL becomes 0 (first tile)
+            const wallIndex = 0; const pathIndex = -1; const tileData = [];
+            sourceMap.forEach(row => {
+                tileData.push(row.map(tile => (tile === WALL ? wallIndex : pathIndex))); });
+            return tileData;
+        }
+
+        getTileCoordinates(sprite) { /* (Same as before) */
+            if (!this.map || !sprite) return { x: 0, y: 0 };
+            const tileX = this.map.worldToTileX(sprite.x);
+            const tileY = this.map.worldToTileY(sprite.y);
+            return { x: tileX, y: tileY };
+        }
+
+        getTileAt(tileX, tileY) { /* (Revised tunnel check) */
+            if (!this.levelLayer) return { index: 0 }; // Wall index 0
+            // Check tunnel rows first when x is out of bounds
+            if (TUNNEL_ROWS.includes(tileY) && (tileX < 0 || tileX >= this.map.width)) {
+                return null; // Tunnel space is walkable (null tile)
+            }
+            // Check normal bounds
+            if (tileX < 0 || tileX >= this.map.width || tileY < 0 || tileY >= this.map.height) {
+                return { index: 0 }; // Other out-of-bounds are walls
+            }
+            // Within bounds, get the tile
+            return this.levelLayer.getTileAt(tileX, tileY);
+        }
+
+        // --- Player Movement (Tween) ---
+
+        handlePlayerInput() {
+            // Only process input if not currently tweening
+            if (this.isMoving) {
+                return;
+            }
+
+            // Check for key presses and update the current direction
+            // The direction persists even if the key is released
+            if (this.cursors.left.isDown) {
+                this.currentDir = Phaser.LEFT;
+            } else if (this.cursors.right.isDown) {
+                this.currentDir = Phaser.RIGHT;
+            } else if (this.cursors.up.isDown) {
+                this.currentDir = Phaser.UP;
+            } else if (this.cursors.down.isDown) {
+                this.currentDir = Phaser.DOWN;
+            }
+            // *** NOTE: We DO NOT set currentDir back to NONE if no key is down ***
+        }
+
+        movePlayer() {
+            // Only start a new move if NOT already moving and a direction is set
+            if (this.isMoving || this.currentDir === Phaser.NONE || !this.map || !this.bunny.active) {
+                return;
+            }
+
+            const currentTileCoords = this.getTileCoordinates(this.bunny);
+            let targetX = this.bunny.x;
+            let targetY = this.bunny.y;
+            let targetTileX = currentTileCoords.x;
+            let targetTileY = currentTileCoords.y;
+            let movingToTunnel = false;
+
+            // Calculate target tile based on the current persistent direction
+            if (this.currentDir === Phaser.LEFT) targetTileX--;
+            else if (this.currentDir === Phaser.RIGHT) targetTileX++;
+            else if (this.currentDir === Phaser.UP) targetTileY--;
+            else if (this.currentDir === Phaser.DOWN) targetTileY++;
+
+            const targetTile = this.getTileAt(targetTileX, targetTileY);
+
+            // Wall index is 0. Move if target is null (tunnel) or not index 0.
+            if (targetTile === null || (targetTile && targetTile.index !== 0)) {
+                const targetWorldXY = this.map.tileToWorldXY(targetTileX, targetTileY);
+
+                if (targetWorldXY) { // Normal move
+                    targetX = targetWorldXY.x + TILE_SIZE / 2;
+                    targetY = targetWorldXY.y + TILE_SIZE / 2;
+                } else if (targetTile === null && TUNNEL_ROWS.includes(targetTileY)) { // Tunnel
+                    movingToTunnel = true;
+                    if (targetTileX < 0) targetX = -TILE_SIZE / 2;
+                    else if (targetTileX >= this.map.width) targetX = GAME_WIDTH + TILE_SIZE / 2;
+                    targetY = currentTileCoords.y * TILE_SIZE + TILE_SIZE / 2;
+                } else {
+                    // Invalid target calculation or map boundary issue
+                    this.currentDir = Phaser.NONE; // Stop trying this direction
+                    console.warn("Cannot calculate target/move into boundary."); return;
+                }
+
+                // Start moving
+                this.isMoving = true;
+
+                // Calculate move duration based on current speed
+                const moveDuration = TILE_SIZE / (this.currentPlayerSpeed / 1000);
+
+                this.tweens.add({
+                    targets: this.bunny,
+                    x: targetX,
+                    y: targetY,
+                    duration: moveDuration,
+                    ease: 'Linear',
+                    onComplete: () => {
+                        this.isMoving = false;
+
+                        // Handle wrapping first if needed
+                        if (movingToTunnel) {
+                            if (this.bunny.x < 0) this.bunny.x = GAME_WIDTH - TILE_SIZE / 2;
+                            else if (this.bunny.x > GAME_WIDTH) this.bunny.x = TILE_SIZE / 2;
+                            this.bunny.y = targetTileY * TILE_SIZE + TILE_SIZE / 2;
+                        }
+
+                        // Snap to final grid position
+                        const finalTileCoords = this.getTileCoordinates(this.bunny);
+                        const finalWorldCenter = this.map.tileToWorldXY(finalTileCoords.x, finalTileCoords.y);
+                        if (finalWorldCenter){
+                            this.bunny.x = finalWorldCenter.x + TILE_SIZE / 2;
+                            this.bunny.y = finalWorldCenter.y + TILE_SIZE / 2;
+                        } else { // Failsafe if snapping fails after wrap etc.
+                            this.bunny.y = targetTileY * TILE_SIZE + TILE_SIZE / 2;
+                        }
+                        // Don't check input here, update loop handles it
+                    }
+                });
+            } else {
+                // Target tile is a wall, stop moving in this direction
+                this.currentDir = Phaser.NONE;
+            }
+        }
+
+        // --- FOX MOVEMENT ---
+
+        canFoxMoveNext(fox, direction) {
+            const coords = this.getTileCoordinates(fox);
+            let nextX = coords.x, nextY = coords.y;
+            if (direction === Phaser.LEFT) nextX--;
+            else if (direction === Phaser.RIGHT) nextX++;
+            else if (direction === Phaser.UP) nextY--;
+            else if (direction === Phaser.DOWN) nextY++;
+            
+            // Check if next position would be a tunnel (off-map)
+            if (nextX < 0 || nextX >= MAP_WIDTH_TILES) {
+                // Don't allow foxes to enter tunnels
+                return false;
+            }
+            
+            const tile = this.getTileAt(nextX, nextY);
+            return tile === null || (tile && tile.index !== 0); // Can move if not a wall
+        }
+
+        chooseFoxDirection(fox) {
+            if (!fox.active) return;
+
+            const possibleDirections = [];
+            if (this.canFoxMoveNext(fox, Phaser.UP)) possibleDirections.push(Phaser.UP);
+            if (this.canFoxMoveNext(fox, Phaser.DOWN)) possibleDirections.push(Phaser.DOWN);
+            if (this.canFoxMoveNext(fox, Phaser.LEFT)) possibleDirections.push(Phaser.LEFT);
+            if (this.canFoxMoveNext(fox, Phaser.RIGHT)) possibleDirections.push(Phaser.RIGHT);
+
+            // Special case: if fox is at tunnel entrance but can't enter, force it to turn around
+            const coords = this.getTileCoordinates(fox);
+            if (possibleDirections.length === 0 && TUNNEL_ROWS.includes(coords.y) && 
+                (coords.x === 0 || coords.x === MAP_WIDTH_TILES - 1)) {
+                // At tunnel entrance with no valid moves, force turn around
+                if (coords.x === 0) fox.nextDir = Phaser.RIGHT;
+                else fox.nextDir = Phaser.LEFT;
+                return;
+            }
+            
+            if (possibleDirections.length === 0) {
+                fox.nextDir = Phaser.NONE;
+                return;
+            }
+
+            let oppositeDir = Phaser.NONE;
+            switch (fox.currentDir) {
+                case Phaser.LEFT:   oppositeDir = Phaser.RIGHT; break;
+                case Phaser.RIGHT:  oppositeDir = Phaser.LEFT;  break;
+                case Phaser.UP:     oppositeDir = Phaser.DOWN;  break;
+                case Phaser.DOWN:   oppositeDir = Phaser.UP;    break;
+            }
+
+            // Filter out the opposite direction
+            const nonReverseOptions = possibleDirections.filter(dir => dir !== oppositeDir);
+
+            // AI Logic: Prioritize non-reversal
+            if (nonReverseOptions.length > 0) {
+                // If options other than reversing exist, pick one of them
+                fox.nextDir = Phaser.Math.RND.pick(nonReverseOptions);
+            } else {
+                // If the only option is to reverse, do that
+                fox.nextDir = Phaser.Math.RND.pick(possibleDirections);
+            }
+        }
+
+        moveFox(fox) {
+            // Only start a new move if NOT already moving and a direction is set
+            if (fox.isMoving || fox.nextDir === Phaser.NONE || !this.map || !fox.active) {
+                return;
+            }
+
+            const currentTileCoords = this.getTileCoordinates(fox);
+            let targetX = fox.x;
+            let targetY = fox.y;
+            let targetTileX = currentTileCoords.x;
+            let targetTileY = currentTileCoords.y;
+
+            // Set current direction to next direction
+            fox.currentDir = fox.nextDir;
+
+            // Calculate target tile based on the current direction
+            if (fox.currentDir === Phaser.LEFT) targetTileX--;
+            else if (fox.currentDir === Phaser.RIGHT) targetTileX++;
+            else if (fox.currentDir === Phaser.UP) targetTileY--;
+            else if (fox.currentDir === Phaser.DOWN) targetTileY++;
+            
+            // Double-check that foxes don't enter tunnels
+            if (targetTileX < 0 || targetTileX >= MAP_WIDTH_TILES) {
+                // Force fox to turn around at tunnel entrance
+                fox.currentDir = (targetTileX < 0) ? Phaser.RIGHT : Phaser.LEFT;
+                fox.nextDir = fox.currentDir;
+                targetTileX = currentTileCoords.x; // Stay in current tile
+                this.time.delayedCall(100, () => {
+                    this.chooseFoxDirection(fox);
+                    this.moveFox(fox);
+                });
+                return;
+            }
+
+            const targetTile = this.getTileAt(targetTileX, targetTileY);
+
+            // Wall index is 0. Move if target is null (tunnel) or not index 0.
+            if (targetTile === null || (targetTile && targetTile.index !== 0)) {
+                const targetWorldXY = this.map.tileToWorldXY(targetTileX, targetTileY);
+
+                if (targetWorldXY) { // Normal move
+                    targetX = targetWorldXY.x + TILE_SIZE / 2;
+                    targetY = targetWorldXY.y + TILE_SIZE / 2;
+                } else {
+                    // Invalid target calculation or map boundary issue
+                    fox.currentDir = Phaser.NONE;
+                    fox.nextDir = Phaser.NONE;
+                    this.chooseFoxDirection(fox);
+                    return;
+                }
+
+                // Start moving
+                fox.isMoving = true;
+
+                this.tweens.add({
+                    targets: fox,
+                    x: targetX,
+                    y: targetY,
+                    duration: FOX_MOVE_DURATION,
+                    ease: 'Linear',
+                    onComplete: () => {
+                        fox.isMoving = false;
+
+                        // Snap to final grid position
+                        const finalTileCoords = this.getTileCoordinates(fox);
+                        const finalWorldCenter = this.map.tileToWorldXY(finalTileCoords.x, finalTileCoords.y);
+                        if (finalWorldCenter){
+                            fox.x = finalWorldCenter.x + TILE_SIZE / 2;
+                            fox.y = finalWorldCenter.y + TILE_SIZE / 2;
+                        } else { // Failsafe if snapping fails
+                            fox.y = targetTileY * TILE_SIZE + TILE_SIZE / 2;
+                        }
+                        
+                        // Choose next direction and continue moving
+                        this.chooseFoxDirection(fox);
+                        this.moveFox(fox);
+                    }
+                });
+            } else {
+                // Target tile is a wall, choose a new direction
+                fox.currentDir = Phaser.NONE;
+                fox.nextDir = Phaser.NONE;
+                this.chooseFoxDirection(fox);
+                this.moveFox(fox);
+            }
+        }
+
+        // --- Other Methods ---
+        collectEgg(bunny, egg) { /* (Same) */
+            egg.disableBody(true, true); this.eggCount--;
+            // console.log("Eggs left:", this.eggCount); // Debug egg count
+        }
+        collectSpecialEgg(bunny, specialEgg) { /* (Same) */
+            specialEgg.disableBody(true, true); this.activatePowerUp();
+        }
+        activatePowerUp() {
+            this.isPoweredUp = true;
+            
+            // Change player to raven when powered up
+            this.bunny.setTexture('powered_bunny');
+            
+            // Boost player speed
+            this.currentPlayerSpeed = POWERED_PLAYER_SPEED;
+            
+            this.foxes.getChildren().forEach(fox => {
+                fox.isVulnerable = true; 
+                fox.setTexture('vulnerable_fox_texture');
+                fox.setTint(0x8888ff); // Apply blue tint to indicate vulnerability
+            });
+            
+            // Clear any existing timers
+            if (this.powerUpTimer) this.powerUpTimer.remove();
+            if (this.warningFlashTimer) this.warningFlashTimer.remove();
+            if (this.flashingTween) this.flashingTween.stop();
+            
+            // Set timer for power-up end
+            this.powerUpTimer = this.time.delayedCall(POWER_UP_DURATION, this.endPowerUp, [], this);
+            
+            // Set timer for warning flash
+            this.warningFlashTimer = this.time.delayedCall(POWER_UP_DURATION - POWER_UP_WARNING_TIME, this.startWarningFlash, [], this);
+        }
+        
+        startWarningFlash() {
+            // Create a flashing effect by toggling visibility rapidly
+            this.flashingTween = this.tweens.add({
+                targets: this.bunny,
+                alpha: 0.3,
+                duration: 200,
+                ease: 'Linear',
+                yoyo: true,
+                repeat: 10, // Flash several times
+                onComplete: () => {
+                    // Ensure alpha is reset to 1 when done
+                    this.bunny.alpha = 1;
+                }
+            });
+        }
+        
+        endPowerUp() {
+            this.isPoweredUp = false;
+            
+            // Stop any flashing effect
+            if (this.flashingTween) {
+                this.flashingTween.stop();
+                this.bunny.alpha = 1; // Reset alpha to ensure visibility
+            }
+            
+            // Change player back to bunny when power-up ends
+            this.bunny.setTexture('bunny');
+            
+            // Reset player speed to normal
+            this.currentPlayerSpeed = PLAYER_SPEED;
+            
+            this.foxes.getChildren().forEach(fox => {
+                if (fox.active) {
+                    fox.isVulnerable = false;
+                    fox.setTexture('fox_texture');
+                    fox.clearTint(); // Remove the blue tint
+                }
+            });
+            
+            this.powerUpTimer = null;
+            this.warningFlashTimer = null;
+        }
+        
+        hitFox(bunny, fox) {
+            if (!fox.active || this.isMoving) return;
+            
+            if (this.isPoweredUp && fox.isVulnerable) {
+                // Fox is eaten - don't use disableBody, just hide and deactivate
+                fox.active = false;
+                fox.visible = false;
+                fox.isMoving = false;
+                fox.currentDir = Phaser.NONE;
+                fox.nextDir = Phaser.NONE;
+                
+                // Respawn fox after delay
+                this.time.delayedCall(5000, () => {
+                    if (this.scene.isActive() && fox) {
+                        // Reactivate fox without using enableBody
+                        fox.active = true;
+                        fox.visible = true;
+                        fox.x = fox.originalX;
+                        fox.y = fox.originalY;
+                        fox.isVulnerable = false;
+                        fox.setTexture('fox_texture');
+                        fox.clearTint(); // Ensure tint is cleared
+                        fox.isMoving = false;
+                        fox.currentDir = Phaser.NONE;
+                        fox.nextDir = Phaser.NONE;
+                        
+                        // Start moving after a short delay
+                        this.time.delayedCall(500, () => {
+                            this.chooseFoxDirection(fox);
+                            this.moveFox(fox);
+                        }, [], this);
+                    }
+                }, [], this);
+            } else if (!this.isPoweredUp) {
+                // Player is caught
+                this.physics.pause();
+                this.isMoving = true;
+                this.bunny.active = false;
+                this.bunny.setTint(0xff0000);
+                
+                // Stop all fox movement
+                this.foxes.getChildren().forEach(f => {
+                    if (f.active) {
+                        f.isMoving = false;
+                    }
+                });
+                
+                // Restart after delay
+                this.time.delayedCall(1500, () => {
+                    if (this.powerUpTimer) this.powerUpTimer.remove();
+                    this.scene.restart();
+                });
+            }
+        }
+        handleTunneling(sprite) {
+            // Use a margin slightly larger than half the tile size
+            const checkMargin = TILE_SIZE * 0.6; // Check slightly past the halfway point
+
+            // Check X position
+            if (sprite.x < -checkMargin) { // Clearly off left edge
+                sprite.x = GAME_WIDTH + checkMargin; // Appear just off right edge
+            } else if (sprite.x > GAME_WIDTH + checkMargin) { // Clearly off right edge
+                sprite.x = -checkMargin; // Appear just off left edge
+            }
+
+            // Add similar logic for Vertical tunnels if needed
+            // if (sprite.y < -checkMargin) sprite.y = GAME_HEIGHT + checkMargin;
+            // else if (sprite.y > GAME_HEIGHT + checkMargin) sprite.y = -checkMargin;
+        }
+        winGame() {
+            this.physics.pause();
+            this.isMoving = true;
+            this.bunny.active = false;
+            
+            // Stop all fox movement
+            this.foxes.getChildren().forEach(f => {
+                if (f.active) {
+                    f.isMoving = false;
+                }
+            });
+            
+            // Clean up timers
+            if (this.powerUpTimer) this.powerUpTimer.remove();
+            if (this.warningFlashTimer) this.warningFlashTimer.remove();
+            if (this.flashingTween) this.flashingTween.stop();
+            
+            this.scene.start('VictoryScene');
+        }
+    }
+
+    class VictoryScene extends Phaser.Scene { /* (Same) */
+        constructor() { super('VictoryScene'); }
+        create() {
+            this.cameras.main.setBackgroundColor('#66cc66');
+            const centerX = this.cameras.main.worldView.x + this.cameras.main.width / 2;
+            const centerY = this.cameras.main.worldView.y + this.cameras.main.height / 2;
+            this.add.text(centerX, centerY - 40, 'Happy Easter!', { fontFamily: 'Arial', fontSize: '64px', color: '#ffffff', align: 'center', stroke: '#000000', strokeThickness: 6 }).setOrigin(0.5);
+            this.add.text(centerX, centerY + 40, 'You collected all the eggs!', { fontFamily: 'Arial', fontSize: '24px', color: '#ffffff', align: 'center' }).setOrigin(0.5);
+            this.add.text(centerX, GAME_HEIGHT - 50, 'Click to Play Again', { fontFamily: 'Arial', fontSize: '20px', color: '#fff', align: 'center' }).setOrigin(0.5);
+            this.input.on('pointerdown', () => { this.scene.stop(); this.scene.start('GameScene'); }, this);
+        }
+    }
+
+    // Config (Debug false)
+    const config = {
+        type: Phaser.AUTO, width: GAME_WIDTH, height: GAME_HEIGHT, parent: 'game-container',
+        physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+        scene: [GameScene, VictoryScene]
+    };
+    const game = new Phaser.Game(config);
+
+</script>
+</body>
+</html>
